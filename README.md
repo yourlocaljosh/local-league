@@ -18,4 +18,5 @@ For hosting service, upload the files and invite the bot to your discord server.
 ## Issues & More
 This repo is actively maintained. More features are coming, with our own API and website coming to make it easier to bring a sports league to you. Report bugs at Issues.
 
-Formerly known as ELOBot
+## About
+Basement Masters (formerly known as **ELOBot**) began because of a sudden table tennis obsession in the summer of 2025. We wanted to compete with each other and track our growth, rivalries, and **the best**. We created this bot to house our entire competitive league within our community.
