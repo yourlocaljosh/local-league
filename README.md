@@ -1,4 +1,4 @@
-# Basement Masters
+# Local League
 Competitive sports league packaged into a Discord bot. Compete with your friends, log the matches, and climb the ELO leaderboard. Any competitive activity where you score against your opponent is compatible with this bot.
 
 ## Setup
@@ -19,4 +19,4 @@ For hosting service, upload the files and invite the bot to your discord server.
 This repo is actively maintained. More features are coming, with our own API and website coming to make it easier to bring a sports league to you. Report bugs at Issues.
 
 ## About
-Basement Masters (formerly known as **ELOBot**) began because of a sudden table tennis obsession in the summer of 2025. We wanted to compete with each other and track our growth, rivalries, and **the best**. We created this bot to house our entire competitive league within our community.
+Local League (formerly known as **ELOBot**) began because of a sudden table tennis obsession in the summer of 2025. We wanted to compete with each other and track our growth, rivalries, and **the best**. We created this bot to house our entire competitive league within our community.
