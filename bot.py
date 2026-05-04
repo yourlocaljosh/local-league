@@ -19,11 +19,27 @@ from utils import is_admin, has_role, format_stats
 from typing import Literal, Optional
 
 import doubles_elo as dE
+from match_log import (
+    can_restore_match,
+    find_match,
+    get_last_active_match,
+    load_match_log,
+    mark_match_voided,
+    new_match_id,
+    record_match,
+    restore_before_snapshot,
+    snapshot_players,
+    utc_now_iso,
+)
 
 load_dotenv()
 
 botToken = os.getenv("DISCORD_TOKEN")
-ALLOWED_ROLE_IDS = os.getenv("ROLE_ID")
+ALLOWED_ROLE_IDS = {
+    int(x.strip())
+    for x in os.getenv("ROLE_ID", "").split(",")
+    if x.strip()
+}
 DEV_GUILD_ID = os.getenv("SERVER_ID")
 ELO_RANKS = os.getenv("RANKS", "0") == "1"
 
@@ -137,12 +153,57 @@ async def match(interaction, winner: discord.Member, loser: discord.Member, scor
     if not (is_admin(interaction.user) or has_role(interaction.user, ALLOWED_ROLE_IDS)):
         return await interaction.response.send_message("No permission", ephemeral=True)
 
+    if winner.id == loser.id:
+        return await interaction.response.send_message("Winner and loser must be different players.", ephemeral=True)
+    if score_w < 0 or score_l < 0:
+        return await interaction.response.send_message("Scores cannot be negative.", ephemeral=True)
+    if score_w <= score_l:
+        return await interaction.response.send_message("Winner's score must be greater than loser's score.", ephemeral=True)
+
     data = load_data()
     register_user(data, winner.id)
     register_user(data, loser.id)
 
-    result = process_match(data, winner.id, loser.id,score_w=score_w,score_l=score_l)
+    match_id = new_match_id("S")
+    logged_at = utc_now_iso()
+    before = snapshot_players(data, (winner.id, loser.id))
+
+    result = process_match(
+        data,
+        winner.id,
+        loser.id,
+        score_w=score_w,
+        score_l=score_l,
+        match_id=match_id,
+        logged_at=logged_at
+    )
+    after = snapshot_players(data, (winner.id, loser.id))
     save_data(data)
+
+    record_match(
+        match_id=match_id,
+        kind="singles",
+        guild_id=interaction.guild_id,
+        channel_id=interaction.channel_id,
+        logged_by_id=interaction.user.id,
+        players=(winner.id, loser.id),
+        before=before,
+        after=after,
+        summary={
+            "winner_id": str(winner.id),
+            "loser_id": str(loser.id),
+            "score_w": score_w,
+            "score_l": score_l,
+            "winner_elo_before": result["winner_elo_before"],
+            "loser_elo_before": result["loser_elo_before"],
+            "winner_elo_after": result["winner_elo_after"],
+            "loser_elo_after": result["loser_elo_after"],
+            "elo_gain": result["elo_gain"],
+            "elo_loss": result["elo_loss"],
+            "bonus": result["bonus"],
+            "logged_at": logged_at,
+        }
+    )
 
     w_stats = get_stats(data, winner.id)
     l_stats = get_stats(data, loser.id)
@@ -166,7 +227,7 @@ async def match(interaction, winner: discord.Member, loser: discord.Member, scor
         f"{score_w} - {score_l} "
         f"**{loser.mention}** ({result['loser_elo_before']})"
     )
-    msg = header + "\n"
+    msg = f"`Match ID: {match_id}`\n" + header + "\n"
     if set_lines:
         msg += "\n".join(set_lines) + "\n"
     msg += f"{winner_line}\n{loser_line}"
@@ -521,8 +582,9 @@ async def history(interaction: discord.Interaction, user: discord.Member = None)
             loser_name         = user.display_name
             loser_elo_after    = h['elo_after']
         outcome_symbol = "🟩" if you_won else "🟥"
+        id_text = f" `{h.get('match_id')}`" if h.get('match_id') else ""
         lines.append(
-            f"{outcome_symbol} {winner_name} ({winner_elo_after}) {score_str} {loser_name} ({loser_elo_after})"
+            f"{outcome_symbol}{id_text} {winner_name} ({winner_elo_after}) {score_str} {loser_name} ({loser_elo_after})"
         )
 
     x_values = list(range(1, len(elos_after) + 1))
@@ -673,9 +735,21 @@ async def dmatch(
     if not is_admin(interaction.user):
         return await interaction.response.send_message("No permission", ephemeral=True)
 
+    player_ids = [a1.id, a2.id, b1.id, b2.id]
+    if len(set(player_ids)) != 4:
+        return await interaction.response.send_message("All four doubles players must be unique.", ephemeral=True)
+    if score_w < 0 or score_l < 0:
+        return await interaction.response.send_message("Scores cannot be negative.", ephemeral=True)
+    if score_w <= score_l:
+        return await interaction.response.send_message("Winner's score must be greater than loser's score.", ephemeral=True)
+
     data = dE.load_data()
     for p in (a1, a2, b1, b2):
         dE.register_user(data, p.id)
+
+    match_id = new_match_id("D")
+    logged_at = utc_now_iso()
+    before_snapshot = snapshot_players(data, player_ids)
 
     before = {
         a1.id: data[str(a1.id)]['elo'],
@@ -689,7 +763,28 @@ async def dmatch(
         a1.id, a2.id,
         b1.id, b2.id
     )
+    after_snapshot = snapshot_players(data, player_ids)
     dE.save_data(data)
+
+    record_match(
+        match_id=match_id,
+        kind="doubles",
+        guild_id=interaction.guild_id,
+        channel_id=interaction.channel_id,
+        logged_by_id=interaction.user.id,
+        players=player_ids,
+        before=before_snapshot,
+        after=after_snapshot,
+        summary={
+            "winners": [str(a1.id), str(a2.id)],
+            "losers": [str(b1.id), str(b2.id)],
+            "score_w": score_w,
+            "score_l": score_l,
+            "delta_win": result["delta_win"],
+            "delta_loss": result["delta_loss"],
+            "logged_at": logged_at,
+        }
+    )
 
     after = {
         a1.id: data[str(a1.id)]['elo'],
@@ -700,7 +795,7 @@ async def dmatch(
 
     def paired_stats(p, q):
         wins = data[str(p)]['partners'].get(str(q), 0)
-        losses = data[str(p)].get('partner_losses', {}).get(str(q), 0)
+        losses = data[str(p)].get('partners_losses', {}).get(str(q), 0)
         return wins, losses
 
     w_wins, w_losses = paired_stats(a1.id, a2.id)
@@ -732,7 +827,7 @@ async def dmatch(
         f"(**{after[b2.id]}**) {l_wins}-{l_losses}"
     )
 
-    msg = header + "\n\n"
+    msg = f"`Match ID: {match_id}`\n" + header + "\n\n"
     if set_lines:
         msg += "\n".join(set_lines) + "\n\n"
     msg += middle + "\n\n" + footer
@@ -801,6 +896,313 @@ async def dmodify(
     await interaction.response.send_message(
         f"{user.display_name}'s **{field}** set to {value}."
     )
+
+def _is_league_admin(interaction: discord.Interaction) -> bool:
+    return is_admin(interaction.user) or has_role(interaction.user, ALLOWED_ROLE_IDS)
+
+
+def _restore_record_for_undo(rec, *, voided_by_id: int, reason: str):
+    """
+    Restore a logged match and mark it voided.
+    Returns (success: bool, message: str).
+    """
+    log = load_match_log()
+    live_rec = find_match(log, rec["match_id"])
+    if not live_rec:
+        return False, "Could not find that match in match_log.json."
+    if live_rec.get("status") != "active":
+        return False, f"That match is already {live_rec.get('status', 'not active')}."
+
+    if live_rec.get("kind") == "singles":
+        data = load_data()
+        save_fn = save_data
+    elif live_rec.get("kind") == "doubles":
+        data = dE.load_data()
+        save_fn = dE.save_data
+    else:
+        return False, "Unknown match type in match log."
+
+    ok, why = can_restore_match(data, live_rec)
+    if not ok:
+        return False, why
+
+    restore_before_snapshot(data, live_rec)
+    save_fn(data)
+    mark_match_voided(log, live_rec, voided_by_id=voided_by_id, reason=reason)
+    return True, f"Voided match `{live_rec['match_id']}`. Stats restored to the pre-match snapshot."
+
+
+async def _match_summary_line(interaction: discord.Interaction, rec) -> str:
+    kind = rec.get("kind", "match")
+    summary = rec.get("summary", {})
+    match_id = rec.get("match_id", "?")
+
+    async def name(uid: str) -> str:
+        try:
+            user = await interaction.client.fetch_user(int(uid))
+            return user.display_name
+        except Exception:
+            return f"ID:{uid}"
+
+    if kind == "singles":
+        winner = await name(summary.get("winner_id"))
+        loser = await name(summary.get("loser_id"))
+        return f"`{match_id}` singles — {winner} {summary.get('score_w', '?')}-{summary.get('score_l', '?')} {loser}"
+
+    if kind == "doubles":
+        winners = summary.get("winners", [])
+        losers = summary.get("losers", [])
+        w_names = " & ".join([await name(uid) for uid in winners])
+        l_names = " & ".join([await name(uid) for uid in losers])
+        return f"`{match_id}` doubles — {w_names} {summary.get('score_w', '?')}-{summary.get('score_l', '?')} {l_names}"
+
+    return f"`{match_id}` {kind}"
+
+
+@tree.command(name="lastmatch", description="Show the most recent active match ID")
+async def lastmatch(interaction: discord.Interaction):
+    log = load_match_log()
+    rec = get_last_active_match(log, guild_id=interaction.guild_id)
+    if not rec:
+        return await interaction.response.send_message("No active logged matches found.", ephemeral=True)
+
+    line = await _match_summary_line(interaction, rec)
+    await interaction.response.send_message(f"Most recent active match:\n{line}")
+
+
+@tree.command(name="undo", description="Admin: undo the most recent active match")
+async def undo(interaction: discord.Interaction):
+    if not _is_league_admin(interaction):
+        return await interaction.response.send_message("No permission", ephemeral=True)
+
+    log = load_match_log()
+    rec = get_last_active_match(log, guild_id=interaction.guild_id)
+    if not rec:
+        return await interaction.response.send_message("No active logged matches found to undo.", ephemeral=True)
+
+    summary = await _match_summary_line(interaction, rec)
+    ok, msg = _restore_record_for_undo(
+        rec,
+        voided_by_id=interaction.user.id,
+        reason="Undo most recent match"
+    )
+    if not ok:
+        return await interaction.response.send_message(msg, ephemeral=True)
+
+    await interaction.response.send_message(f"✅ {msg}\n{summary}")
+
+
+@tree.command(name="voidmatch", description="Admin: void a match by match ID and restore stats")
+@app_commands.describe(
+    match_id="The match ID, for example S-A1B2C3D4",
+    reason="Optional reason for voiding the match"
+)
+async def voidmatch(interaction: discord.Interaction, match_id: str, reason: Optional[str] = None):
+    if not _is_league_admin(interaction):
+        return await interaction.response.send_message("No permission", ephemeral=True)
+
+    log = load_match_log()
+    rec = find_match(log, match_id)
+    if not rec:
+        return await interaction.response.send_message("No match found with that ID.", ephemeral=True)
+    if rec.get("guild_id") != str(interaction.guild_id):
+        return await interaction.response.send_message("That match ID belongs to another server or has no server attached.", ephemeral=True)
+
+    summary = await _match_summary_line(interaction, rec)
+    ok, msg = _restore_record_for_undo(
+        rec,
+        voided_by_id=interaction.user.id,
+        reason=reason or "Voided by admin"
+    )
+    if not ok:
+        return await interaction.response.send_message(msg, ephemeral=True)
+
+    await interaction.response.send_message(f"✅ {msg}\n{summary}")
+
+
+@tree.command(name="editmatch", description="Admin: edit a singles match by voiding it and logging the corrected result")
+@app_commands.describe(
+    match_id="The original singles match ID",
+    winner="Correct winner",
+    loser="Correct loser",
+    score_w="Correct winner score",
+    score_l="Correct loser score"
+)
+async def editmatch(
+    interaction: discord.Interaction,
+    match_id: str,
+    winner: discord.Member,
+    loser: discord.Member,
+    score_w: int,
+    score_l: int
+):
+    if not _is_league_admin(interaction):
+        return await interaction.response.send_message("No permission", ephemeral=True)
+    if winner.id == loser.id:
+        return await interaction.response.send_message("Winner and loser must be different players.", ephemeral=True)
+    if score_w < 0 or score_l < 0:
+        return await interaction.response.send_message("Scores cannot be negative.", ephemeral=True)
+    if score_w <= score_l:
+        return await interaction.response.send_message("Winner's score must be greater than loser's score.", ephemeral=True)
+
+    log = load_match_log()
+    old_rec = find_match(log, match_id)
+    if not old_rec:
+        return await interaction.response.send_message("No match found with that ID.", ephemeral=True)
+    if old_rec.get("guild_id") != str(interaction.guild_id):
+        return await interaction.response.send_message("That match ID belongs to another server or has no server attached.", ephemeral=True)
+    if old_rec.get("kind") != "singles":
+        return await interaction.response.send_message("Use `/deditmatch` for doubles matches.", ephemeral=True)
+    if old_rec.get("status") != "active":
+        return await interaction.response.send_message("That match is not active, so it cannot be edited.", ephemeral=True)
+
+    data = load_data()
+    ok, why = can_restore_match(data, old_rec)
+    if not ok:
+        return await interaction.response.send_message(why, ephemeral=True)
+
+    # Step 1: restore the old match's before-state.
+    restore_before_snapshot(data, old_rec)
+    mark_match_voided(log, old_rec, voided_by_id=interaction.user.id, reason="Edited by admin")
+
+    # Step 2: log the corrected match from that restored state.
+    register_user(data, winner.id)
+    register_user(data, loser.id)
+    new_id = new_match_id("S")
+    logged_at = utc_now_iso()
+    before = snapshot_players(data, (winner.id, loser.id))
+    result = process_match(
+        data,
+        winner.id,
+        loser.id,
+        score_w=score_w,
+        score_l=score_l,
+        match_id=new_id,
+        logged_at=logged_at
+    )
+    after = snapshot_players(data, (winner.id, loser.id))
+    save_data(data)
+
+    record_match(
+        match_id=new_id,
+        kind="singles",
+        guild_id=interaction.guild_id,
+        channel_id=interaction.channel_id,
+        logged_by_id=interaction.user.id,
+        players=(winner.id, loser.id),
+        before=before,
+        after=after,
+        summary={
+            "winner_id": str(winner.id),
+            "loser_id": str(loser.id),
+            "score_w": score_w,
+            "score_l": score_l,
+            "winner_elo_before": result["winner_elo_before"],
+            "loser_elo_before": result["loser_elo_before"],
+            "winner_elo_after": result["winner_elo_after"],
+            "loser_elo_after": result["loser_elo_after"],
+            "elo_gain": result["elo_gain"],
+            "elo_loss": result["elo_loss"],
+            "bonus": result["bonus"],
+            "logged_at": logged_at,
+        },
+        edited_from=old_rec["match_id"]
+    )
+
+    await interaction.response.send_message(
+        f"✅ Edited match `{old_rec['match_id']}`.\n"
+        f"Old match was voided. New match ID: `{new_id}`\n"
+        f"{winner.mention} {score_w}-{score_l} {loser.mention}"
+    )
+
+
+@tree.command(name="deditmatch", description="Admin: edit a doubles match by voiding it and logging the corrected result")
+@app_commands.describe(
+    match_id="The original doubles match ID",
+    a1="Correct winning team player 1",
+    a2="Correct winning team player 2",
+    b1="Correct losing team player 1",
+    b2="Correct losing team player 2",
+    score_w="Correct winning team score",
+    score_l="Correct losing team score"
+)
+async def deditmatch(
+    interaction: discord.Interaction,
+    match_id: str,
+    a1: discord.Member,
+    a2: discord.Member,
+    b1: discord.Member,
+    b2: discord.Member,
+    score_w: int,
+    score_l: int
+):
+    if not _is_league_admin(interaction):
+        return await interaction.response.send_message("No permission", ephemeral=True)
+
+    player_ids = [a1.id, a2.id, b1.id, b2.id]
+    if len(set(player_ids)) != 4:
+        return await interaction.response.send_message("All four doubles players must be unique.", ephemeral=True)
+    if score_w < 0 or score_l < 0:
+        return await interaction.response.send_message("Scores cannot be negative.", ephemeral=True)
+    if score_w <= score_l:
+        return await interaction.response.send_message("Winner's score must be greater than loser's score.", ephemeral=True)
+
+    log = load_match_log()
+    old_rec = find_match(log, match_id)
+    if not old_rec:
+        return await interaction.response.send_message("No match found with that ID.", ephemeral=True)
+    if old_rec.get("guild_id") != str(interaction.guild_id):
+        return await interaction.response.send_message("That match ID belongs to another server or has no server attached.", ephemeral=True)
+    if old_rec.get("kind") != "doubles":
+        return await interaction.response.send_message("Use `/editmatch` for singles matches.", ephemeral=True)
+    if old_rec.get("status") != "active":
+        return await interaction.response.send_message("That match is not active, so it cannot be edited.", ephemeral=True)
+
+    data = dE.load_data()
+    ok, why = can_restore_match(data, old_rec)
+    if not ok:
+        return await interaction.response.send_message(why, ephemeral=True)
+
+    restore_before_snapshot(data, old_rec)
+    mark_match_voided(log, old_rec, voided_by_id=interaction.user.id, reason="Edited by admin")
+
+    for p in (a1, a2, b1, b2):
+        dE.register_user(data, p.id)
+
+    new_id = new_match_id("D")
+    logged_at = utc_now_iso()
+    before = snapshot_players(data, player_ids)
+    result = dE.process_doubles_match(data, a1.id, a2.id, b1.id, b2.id)
+    after = snapshot_players(data, player_ids)
+    dE.save_data(data)
+
+    record_match(
+        match_id=new_id,
+        kind="doubles",
+        guild_id=interaction.guild_id,
+        channel_id=interaction.channel_id,
+        logged_by_id=interaction.user.id,
+        players=player_ids,
+        before=before,
+        after=after,
+        summary={
+            "winners": [str(a1.id), str(a2.id)],
+            "losers": [str(b1.id), str(b2.id)],
+            "score_w": score_w,
+            "score_l": score_l,
+            "delta_win": result["delta_win"],
+            "delta_loss": result["delta_loss"],
+            "logged_at": logged_at,
+        },
+        edited_from=old_rec["match_id"]
+    )
+
+    await interaction.response.send_message(
+        f"✅ Edited doubles match `{old_rec['match_id']}`.\n"
+        f"Old match was voided. New match ID: `{new_id}`\n"
+        f"{a1.mention} & {a2.mention} {score_w}-{score_l} {b1.mention} & {b2.mention}"
+    )
+
 
 # LAUNCH COMMANDS
 

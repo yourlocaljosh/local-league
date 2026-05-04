@@ -66,7 +66,9 @@ def _append_single_history(entry, *,
                            score_w: int,
                            score_l: int,
                            player_elo_after: int,
-                           opponent_elo_after: int):
+                           opponent_elo_after: int,
+                           match_id: str = None,
+                           logged_at: str = None):
     """
     Append one perspective history record to `entry['match_history']`.
     `entry` is the player dict (already registered).
@@ -81,6 +83,10 @@ def _append_single_history(entry, *,
         "elo_after": player_elo_after,
         "opponent_elo_after": opponent_elo_after,
     }
+    if match_id:
+        rec["match_id"] = match_id
+    if logged_at:
+        rec["logged_at"] = logged_at
     entry['match_history'].insert(0, rec)
     if len(entry['match_history']) > HISTORY_LIMIT:
         entry['match_history'] = entry['match_history'][:HISTORY_LIMIT]
@@ -92,7 +98,9 @@ def append_match_history(data,
                          score_w: int,
                          score_l: int,
                          winner_elo_after: int,
-                         loser_elo_after: int):
+                         loser_elo_after: int,
+                         match_id: str = None,
+                         logged_at: str = None):
     """
     Canonical way to log history for BOTH players (newest first).
     Safe to call from process_match *after* updating elos/statistics,
@@ -110,7 +118,9 @@ def append_match_history(data,
         score_w=score_w,
         score_l=score_l,
         player_elo_after=winner_elo_after,
-        opponent_elo_after=loser_elo_after
+        opponent_elo_after=loser_elo_after,
+        match_id=match_id,
+        logged_at=logged_at
     )
     _append_single_history(
         l,
@@ -120,11 +130,13 @@ def append_match_history(data,
         score_w=score_w,
         score_l=score_l,
         player_elo_after=loser_elo_after,
-        opponent_elo_after=winner_elo_after
+        opponent_elo_after=winner_elo_after,
+        match_id=match_id,
+        logged_at=logged_at
     )
 
 
-def process_match(data, winner_id, loser_id,score_w=None,score_l=None):
+def process_match(data, winner_id, loser_id, score_w=None, score_l=None, match_id=None, logged_at=None):
     wkey, lkey = str(winner_id), str(loser_id)
     winner = data[wkey]
     loser  = data[lkey]
@@ -186,7 +198,9 @@ def process_match(data, winner_id, loser_id,score_w=None,score_l=None):
         score_w=score_w if score_w is not None else 0,
         score_l=score_l if score_l is not None else 0,
         winner_elo_after=w_after,
-        loser_elo_after=l_after
+        loser_elo_after=l_after,
+        match_id=match_id,
+        logged_at=logged_at
     )
     
     winner.setdefault('peak_elo', winner['elo'])
