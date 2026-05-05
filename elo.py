@@ -27,25 +27,26 @@ def register_user(data, user_id):
     key = str(user_id)
     if key not in data:
         data[key] = {
-            'elo':            100,
-            'wins':           0,
-            'losses':         0,
-            'first_5_bonus':  0,
-            'streak':         0,
-            'head_to_head':   {},
-            'medals':         [],
-            'all_time_gain':  0,
-            'all_time_loss':  0,
-            'match_history':  [],
-            'peak_elo':       100
+            'elo': 100,
+            'wins': 0,
+            'losses': 0,
+            'first_5_bonus': 0,
+            'streak': 0,
+            'head_to_head': {},
+            'medals': [],
+            'all_time_gain': 0,
+            'all_time_loss': 0,
+            'match_history': [],
+            'peak_elo': 100
         }
     else:
         entry = data[key]
         entry.setdefault('head_to_head', {})
-        entry.setdefault('medals',        [])
-        entry.setdefault('all_time_gain',  0)
-        entry.setdefault('all_time_loss',  0)
+        entry.setdefault('medals', [])
+        entry.setdefault('all_time_gain', 0)
+        entry.setdefault('all_time_loss', 0)
         entry.setdefault('match_history', [])
+
 
 def get_stats(data, user_id):
     return data.get(str(user_id), None)
@@ -58,6 +59,7 @@ def set_stat(data, user_id, stat, value):
 
 def expected_score(player_elo, opponent_elo):
     return 1 / (1 + 10 ** ((opponent_elo - player_elo) / 200))
+
 
 def _append_single_history(entry, *,
                            player_is_winner: bool,
@@ -108,7 +110,7 @@ def append_match_history(data,
     are already post-match).
     """
     w = data[str(winner_id)]
-    l = data[str(loser_id)]
+    loser = data[str(loser_id)]
 
     _append_single_history(
         w,
@@ -123,7 +125,7 @@ def append_match_history(data,
         logged_at=logged_at
     )
     _append_single_history(
-        l,
+        loser,
         player_is_winner=False,
         winner_id=winner_id,
         opponent_id=winner_id,
@@ -136,16 +138,24 @@ def append_match_history(data,
     )
 
 
-def process_match(data, winner_id, loser_id, score_w=None, score_l=None, match_id=None, logged_at=None):
+def process_match(
+        data,
+        winner_id,
+        loser_id,
+        score_w=None,
+        score_l=None,
+        match_id=None,
+        logged_at=None):
     wkey, lkey = str(winner_id), str(loser_id)
     winner = data[wkey]
-    loser  = data[lkey]
-    
+    loser = data[lkey]
+
     winner.setdefault('head_to_head', {})
     loser .setdefault('head_to_head', {})
 
-    record_w = winner['head_to_head'].setdefault(lkey, {'wins': 0, 'losses': 0})
-    record_l = loser ['head_to_head'].setdefault(wkey, {'wins': 0, 'losses': 0})
+    record_w = winner['head_to_head'].setdefault(
+        lkey, {'wins': 0, 'losses': 0})
+    record_l = loser['head_to_head'].setdefault(wkey, {'wins': 0, 'losses': 0})
 
     w_before = winner['elo']
     l_before = loser['elo']
@@ -174,23 +184,23 @@ def process_match(data, winner_id, loser_id, score_w=None, score_l=None, match_i
     total_gain = elo_gain + bonus
 
     winner['elo'] = max(ELO_FLOOR, w_before + total_gain)
-    loser['elo']  = max(ELO_FLOOR, l_before - elo_loss)
-    
+    loser['elo'] = max(ELO_FLOOR, l_before - elo_loss)
+
     w_after = winner['elo']
     l_after = loser['elo']
-    
+
     winner['all_time_gain'] += total_gain
-    loser ['all_time_loss'] += elo_loss
+    loser['all_time_loss'] += elo_loss
 
     winner['wins'] += 1
     if bonus:
         winner['first_5_bonus'] += 1
     winner['streak'] += 1
-    loser['losses']  += 1
-    loser['streak']   = 0
-    record_w['wins']   += 1
+    loser['losses'] += 1
+    loser['streak'] = 0
+    record_w['wins'] += 1
     record_l['losses'] += 1
-    
+
     append_match_history(
         data,
         winner_id=winner_id,
@@ -202,7 +212,7 @@ def process_match(data, winner_id, loser_id, score_w=None, score_l=None, match_i
         match_id=match_id,
         logged_at=logged_at
     )
-    
+
     winner.setdefault('peak_elo', winner['elo'])
     loser.setdefault('peak_elo', loser['elo'])
 
@@ -213,12 +223,12 @@ def process_match(data, winner_id, loser_id, score_w=None, score_l=None, match_i
 
     return {
         'winner_elo_before': w_before,
-        'loser_elo_before':  l_before,
-        'elo_gain':          elo_gain,
-        'elo_loss':          elo_loss,
-        'bonus':             bonus,
-        'total_gain':        total_gain,
-        'new_streak':        winner['streak'],
-        'winner_elo_after':  w_after,
-        'loser_elo_after':   l_after
+        'loser_elo_before': l_before,
+        'elo_gain': elo_gain,
+        'elo_loss': elo_loss,
+        'bonus': bonus,
+        'total_gain': total_gain,
+        'new_streak': winner['streak'],
+        'winner_elo_after': w_after,
+        'loser_elo_after': l_after
     }

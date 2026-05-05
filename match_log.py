@@ -36,7 +36,8 @@ def save_match_log(log: Dict[str, Any]) -> None:
 
 def snapshot_players(data: Dict[str, Any], player_ids) -> Dict[str, Any]:
     """Deep-copy the full saved stats for the given players."""
-    return {str(pid): copy.deepcopy(data[str(pid)]) for pid in player_ids if str(pid) in data}
+    return {str(pid): copy.deepcopy(data[str(pid)])
+            for pid in player_ids if str(pid) in data}
 
 
 def record_match(
@@ -70,7 +71,6 @@ def record_match(
     if edited_from:
         rec["edited_from"] = edited_from
 
-    
     log["matches"].insert(0, rec)
     save_match_log(log)
     return rec
@@ -102,7 +102,8 @@ def get_last_active_match(
     return None
 
 
-def can_restore_match(data: Dict[str, Any], rec: Dict[str, Any]) -> Tuple[bool, str]:
+def can_restore_match(data: Dict[str, Any],
+                      rec: Dict[str, Any]) -> Tuple[bool, str]:
     """
     Safety check before undo/void/edit.
 
