@@ -13,7 +13,14 @@ For hosting service, upload the files and invite the bot to your discord server.
 
 `/leaderboard` - View the top ranking players in your server
 
-`/history` - View a player's previous 10 matches and an ELO graph displaying the trend. 
+`/history` - View a player's previous 10 matches and an Elo graph displaying the trend. 
+
+`/stats` - View a player's profile, including their current and peak Elo, all-time wins and losses.
+
+`/alltime` and `/losers` - View the all-time Elo gainers and losers respectively
+
+Plus several permission-locked commands such as `/modifyelo` for ease-of-access administration.
+
 
 ## Issues & More
 This repo is actively maintained. More features are coming, with our own API and website coming to make it easier to bring a sports league to you. Report bugs at Issues.
